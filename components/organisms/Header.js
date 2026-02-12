@@ -39,17 +39,10 @@ export default function Header({ onMenuClick, user }) {
           
         </div>
 
-        <div className="hidden md:block flex-1 max-w-md mx-8">
-          <SearchBox placeholder="Search anything..." />
-        </div>
+       
 
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm">
-            <Icon icon={Bell} size={18} />
-          </Button>
-          <Button variant="ghost" size="sm">
-            <Icon icon={Settings} size={18} />
-          </Button>
+          
 
           <div className="relative ml-4 pl-4 border-l border-gray-200">
             <div onClick={handleToggle} className="cursor-pointer">
