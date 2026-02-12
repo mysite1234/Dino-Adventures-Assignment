@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import Header from '@/components/organisms/Header';
 import Sidebar from '@/components/organisms/Sidebar';
 import { Toaster } from 'sonner';
-import AuthPage from '@/app/login/page';
 import MinimizedPlayer from '../atoms/video-player/MiniPlayer';
 export default function MainLayout({ children }) {
   const pathname = usePathname();

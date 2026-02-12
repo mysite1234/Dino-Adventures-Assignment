@@ -1,4 +1,4 @@
-'use client';
+'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -83,6 +83,29 @@ export default function FullScreenPlayer({ video, category }) {
       window.removeEventListener('resize', checkMobile);
     };
   }, []);
+  
+
+  // Auto-fullscreen when coming from minimized player
+useEffect(() => {
+  // Check if we should enter fullscreen mode
+  const shouldEnterFullscreen = localStorage.getItem('request_fullscreen') === 'true';
+  
+  if (shouldEnterFullscreen) {
+    // Clear the flag immediately
+    localStorage.removeItem('request_fullscreen');
+    
+    // Small delay to ensure player is ready
+    const fullscreenTimer = setTimeout(() => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+          console.log('Error entering fullscreen:', err);
+        });
+      }
+    }, 1500); // Slightly longer delay to ensure player is ready
+    
+    return () => clearTimeout(fullscreenTimer);
+  }
+}, []); // Run once on component mount
 
   // Extract YouTube ID from URL
   const getYouTubeId = useCallback((url) => {

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Pause, Volume2, VolumeX, Maximize2, X, Move } from 'lucide-react';
-
+import FullScreenPlayer from './FullScreenPlayer';
 
 const MINIMIZED_PLAYER_KEY = 'minimized_player_state';
 const MINIMIZED_PLAYER_POSITION_KEY = 'minimized_player_position';
@@ -333,8 +333,12 @@ export default function MinimizedPlayer() {
     if (playerState && youTubePlayerRef.current) {
       const updatedState = {
         ...playerState,
+        video: {
+          ...playerState.video,
+          slug: playerState.youtubeId
+        },
         isPlaying: isPlaying,
-        currentTime: currentTime,
+        currentTime: currentTime, // Make sure this is saved
         volume: volume,
         isMuted: isMuted,
         progress: progress,
@@ -343,8 +347,13 @@ export default function MinimizedPlayer() {
       localStorage.setItem(MINIMIZED_PLAYER_KEY, JSON.stringify(updatedState));
     }
     
-    // Navigate to player page
-    router.push(`/player?videoId=${playerState.youtubeId}`);
+    // Set flag for fullscreen
+    localStorage.setItem('request_fullscreen', 'true');
+    
+    // Pass currentTime in URL as well for redundancy
+    if (playerState?.youtubeId) {
+      router.push(`/video/${playerState.youtubeId}?t=${Math.floor(currentTime)}`);
+    }
   };
 
   const closePlayer = () => {
