@@ -37,11 +37,11 @@ const navigationItems = [
     label: 'Dashboard', 
     icon: Home 
   },
-  { 
+  /* { 
     href: '/customers', 
     label: 'Demo Video', 
     icon: CalendarCheck 
-  },
+  }, */
  
 /*   { 
     href: '/users', 
