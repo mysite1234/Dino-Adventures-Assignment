@@ -36,12 +36,14 @@ export default function Header({ onMenuClick, user }) {
             <Icon icon={Menu} size={20} />
           </Button>
 
-       
+          <Text variant="h4" as="h1" className="text-gray-900">
+            Dashboard
+          </Text>
         </div>
 
-       {/*  <div className="hidden md:block flex-1 max-w-md mx-8">
+        <div className="hidden md:block flex-1 max-w-md mx-8">
           <SearchBox placeholder="Search anything..." />
-        </div> */}
+        </div>
 
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm">
@@ -54,7 +56,7 @@ export default function Header({ onMenuClick, user }) {
           <div className="relative ml-4 pl-4 border-l border-gray-200">
             <div onClick={handleToggle} className="cursor-pointer">
               <UserProfile
-                name={'Manoj G'}
+                name={user?.name || 'John Doe'}
                 email={user?.email || 'john@example.com'}
                 avatar="https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=150"
                 size="sm"
