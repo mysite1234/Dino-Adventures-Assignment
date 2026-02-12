@@ -37,21 +37,7 @@ const navigationItems = [
     label: 'Dashboard', 
     icon: Home 
   },
-  { 
-    href: '/customers', 
-    label: 'Event Registration', 
-    icon: CalendarCheck 
-  },
-  { 
-    href: '/residency-details', 
-    label: 'Residency Details', 
-    icon: Building2 
-  },
-  { 
-    href: '/events-type', 
-    label: 'Events Type', 
-    icon: Building2 
-  },
+  
 /*   { 
     href: '/users', 
     label: 'Users', 
