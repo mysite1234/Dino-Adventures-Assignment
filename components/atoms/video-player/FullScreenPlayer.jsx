@@ -1,4 +1,4 @@
-'use client'
+'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -68,7 +68,7 @@ export default function FullScreenPlayer({ video, category }) {
   const [currentVideo, setCurrentVideo] = useState(video);
   const [isHoveringEdge, setIsHoveringEdge] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [showCategoryInfo, setShowCategoryInfo] = useState(true); // Always show category info by default on mobile
+  const [showCategoryInfo, setShowCategoryInfo] = useState(true);
 
   // Check if mobile on mount and resize
   useEffect(() => {
@@ -188,7 +188,7 @@ useEffect(() => {
     const touchY = touch.clientY - rect.top;
     
     // Check if touch is near top (for category info toggle)
-    const isNearTop = touchY < 100;
+    const isNearTop = touchY < 80;
     
     if (isNearTop) {
       // Toggle category info
@@ -735,12 +735,6 @@ useEffect(() => {
     resetControlsTimeout();
   }, [resetControlsTimeout]);
 
-  // Toggle category info - with proper event handling
-  const toggleCategoryInfo = useCallback(() => {
-    setShowCategoryInfo(prev => !prev);
-    resetControlsTimeout();
-  }, [resetControlsTimeout]);
-
   // Close category info - stops event propagation
   const closeCategoryInfo = useCallback((e) => {
     if (e) {
@@ -748,6 +742,15 @@ useEffect(() => {
       e.preventDefault(); // Prevent default behavior
     }
     setShowCategoryInfo(false);
+    resetControlsTimeout();
+  }, [resetControlsTimeout]);
+
+  // Toggle category info - with proper event handling
+  const toggleCategoryInfo = useCallback((e) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    setShowCategoryInfo(prev => !prev);
     resetControlsTimeout();
   }, [resetControlsTimeout]);
 
@@ -878,14 +881,15 @@ useEffect(() => {
               <span className="text-[10px] md:text-xs text-gray-300 px-2 py-1 bg-white/10 rounded-full">
                 {category?.name || 'Unknown Category'}
               </span>
-              {/* Close button for category info - Only on mobile */}
-              {isMobile && (
+              {/* Close button for category info - ALWAYS VISIBLE ON MOBILE */}
+              {isMobile && showCategoryInfo && (
                 <button
                   onClick={closeCategoryInfo}
-                  className="category-close-btn p-0.5 md:p-1 hover:bg-white/10 rounded-full transition-colors"
+                  className="category-close-btn p-1 hover:bg-white/20 rounded-full transition-colors"
                   title="Hide category"
+                  aria-label="Close category info"
                 >
-                  <X size={isMobile ? 12 : 14} className="text-gray-400" />
+                  <X size={14} className="text-white" />
                 </button>
               )}
             </div>
@@ -1059,8 +1063,8 @@ useEffect(() => {
                 
                 {/* Mobile-only close hint */}
                 {isMobile && (
-                  <div className="mt-4 pt-4 border-t border-white/20 text-center">
-                    <p className="text-xs text-gray-400">Tap outside to close</p>
+                  <div onClick={()=>setShowSuggestions(false)} className="mt-4 pt-4 border-t border-white/20 text-center">
+                    <p className="text-xs text-gray-400">Click to close</p>
                   </div>
                 )}
               </div>

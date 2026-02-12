@@ -33,6 +33,7 @@ export default function MinimizedPlayer() {
   const lastTouchRef = useRef({ x: 0, y: 0, time: 0 });
   const velocityRef = useRef({ x: 0, y: 0 });
   const animationRef = useRef(null);
+  const isDraggingRef = useRef(false);
 
   // Format time
   const formatTime = (time) => {
@@ -223,12 +224,11 @@ export default function MinimizedPlayer() {
     const windowWidth = window.innerWidth;
     const windowHeight = window.innerHeight;
     const playerWidth = 320;
-    const playerHeight = 244; // Total height
+    const playerHeight = 244;
     
     let targetX = position.x;
     let targetY = position.y;
     
-    // Snap to nearest edge
     const margin = 20;
     
     if (position.x < windowWidth / 2) {
@@ -243,7 +243,6 @@ export default function MinimizedPlayer() {
       targetY = windowHeight - playerHeight - margin;
     }
     
-    // Animate to position
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
     }
@@ -277,6 +276,12 @@ export default function MinimizedPlayer() {
 
   // Desktop drag handlers
   const handleMouseDown = useCallback((e) => {
+    // Only handle drag on the header
+    const header = e.currentTarget;
+    if (!header.contains(e.target) || e.target.tagName === 'BUTTON') {
+      return;
+    }
+    
     e.preventDefault();
     if (!minimizedPlayerRef.current) return;
     
@@ -286,6 +291,7 @@ export default function MinimizedPlayer() {
       y: e.clientY - rect.top
     });
     setIsDragging(true);
+    isDraggingRef.current = true;
     
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
@@ -294,7 +300,7 @@ export default function MinimizedPlayer() {
   }, []);
 
   const handleMouseMove = useCallback((e) => {
-    if (!isDragging || !minimizedPlayerRef.current) return;
+    if (!isDraggingRef.current || !minimizedPlayerRef.current) return;
     e.preventDefault();
     
     const windowWidth = window.innerWidth;
@@ -305,28 +311,34 @@ export default function MinimizedPlayer() {
     let newX = e.clientX - dragOffset.x;
     let newY = e.clientY - dragOffset.y;
     
-    // Constrain to window bounds
     newX = Math.max(0, Math.min(newX, windowWidth - playerWidth));
     newY = Math.max(0, Math.min(newY, windowHeight - playerHeight));
     
     setPosition({ x: newX, y: newY });
-  }, [isDragging, dragOffset]);
+  }, [dragOffset]); // Fixed: Added dragOffset dependency
 
   const handleMouseUp = useCallback(() => {
-    if (isDragging) {
+    if (isDraggingRef.current) {
       setIsDragging(false);
+      isDraggingRef.current = false;
       snapToCorner();
     }
-  }, [isDragging, snapToCorner]);
+  }, [snapToCorner]);
 
-  // Mobile touch handlers - YouTube style
+  // Mobile touch handlers
   const handleTouchStart = useCallback((e) => {
-    if (!minimizedPlayerRef.current) return;
-    
+    // Check if touch is on header and not on buttons
     const touch = e.touches[0];
-    const rect = minimizedPlayerRef.current.getBoundingClientRect();
+    const header = e.currentTarget;
+    const rect = header.getBoundingClientRect();
+    const target = document.elementFromPoint(touch.clientX, touch.clientY);
     
-    // Only allow drag from header area
+    // Only allow drag on header and not on buttons
+    if (target && (target.tagName === 'BUTTON' || target.closest('button'))) {
+      return;
+    }
+    
+    // Check if within header area
     if (touch.clientY - rect.top <= 48) {
       e.preventDefault();
       
@@ -349,6 +361,7 @@ export default function MinimizedPlayer() {
       
       velocityRef.current = { x: 0, y: 0 };
       setIsDragging(true);
+      isDraggingRef.current = true;
       setShowControls(false);
       
       if (animationRef.current) {
@@ -359,14 +372,13 @@ export default function MinimizedPlayer() {
   }, []);
 
   const handleTouchMove = useCallback((e) => {
-    if (!isDragging || !minimizedPlayerRef.current) return;
+    if (!isDraggingRef.current || !minimizedPlayerRef.current) return;
     e.preventDefault();
     
     const touch = e.touches[0];
     const now = Date.now();
     const dt = now - lastTouchRef.current.time;
     
-    // Calculate velocity
     if (dt > 0) {
       velocityRef.current = {
         x: (touch.clientX - lastTouchRef.current.x) / dt,
@@ -388,36 +400,34 @@ export default function MinimizedPlayer() {
     let newX = touch.clientX - dragOffset.x;
     let newY = touch.clientY - dragOffset.y;
     
-    // Rubber band effect when dragging beyond bounds
-    const overdragX = 30;
-    const overdrɑgY = 30;
+    const overDrag = 30;
     
     if (newX < 0) {
-      newX = -Math.min(Math.abs(newX), overdrɑgY);
+      newX = -Math.min(Math.abs(newX), overDrag);
     }
     if (newX > windowWidth - playerWidth) {
-      newX = windowWidth - playerWidth + Math.min(newX - (windowWidth - playerWidth), overdrɑgY);
+      newX = windowWidth - playerWidth + Math.min(newX - (windowWidth - playerWidth), overDrag);
     }
     if (newY < 0) {
-      newY = -Math.min(Math.abs(newY), overdrɑgY);
+      newY = -Math.min(Math.abs(newY), overDrag);
     }
     if (newY > windowHeight - playerHeight) {
-      newY = windowHeight - playerHeight + Math.min(newY - (windowHeight - playerHeight), overdrɑgY);
+      newY = windowHeight - playerHeight + Math.min(newY - (windowHeight - playerHeight), overDrag);
     }
     
     setPosition({ x: newX, y: newY });
-  }, [isDragging, dragOffset]);
+  }, [dragOffset]); // Fixed: Added dragOffset dependency
 
   const handleTouchEnd = useCallback((e) => {
-    if (!isDragging) return;
+    if (!isDraggingRef.current) return;
     e.preventDefault();
     
     const touchEndTime = Date.now();
     const dragDuration = touchEndTime - dragStartRef.current.time;
     
     setIsDragging(false);
+    isDraggingRef.current = false;
     
-    // Apply fling if fast enough
     if (dragDuration < 300 && 
         (Math.abs(velocityRef.current.x) > 0.3 || Math.abs(velocityRef.current.y) > 0.3)) {
       
@@ -426,60 +436,25 @@ export default function MinimizedPlayer() {
       const playerWidth = 320;
       const playerHeight = 244;
       
-      // Calculate fling trajectory
       let flingX = position.x + velocityRef.current.x * 500;
       let flingY = position.y + velocityRef.current.y * 500;
       
-      // Constrain with rubber band
       flingX = Math.max(-30, Math.min(flingX, windowWidth - playerWidth + 30));
       flingY = Math.max(-30, Math.min(flingY, windowHeight - playerHeight + 30));
       
       setPosition({ x: flingX, y: flingY });
       
-      // Short delay before snapping
       setTimeout(() => {
         snapToCorner();
       }, 50);
     } else {
       snapToCorner();
     }
-  }, [isDragging, position, snapToCorner]);
+  }, [position, snapToCorner]);
 
-  const togglePlay = () => {
-    if (youTubePlayerRef.current) {
-      if (isPlaying) {
-        youTubePlayerRef.current.pauseVideo();
-      } else {
-        youTubePlayerRef.current.playVideo();
-      }
-    }
-    setShowControls(true);
-  };
-
-  const toggleMute = () => {
-    if (youTubePlayerRef.current) {
-      if (isMuted) {
-        youTubePlayerRef.current.unMute();
-        youTubePlayerRef.current.setVolume(volume);
-        setIsMuted(false);
-      } else {
-        youTubePlayerRef.current.mute();
-        setIsMuted(true);
-      }
-    }
-    setShowControls(true);
-  };
-
-  const handleVolumeChange = (e) => {
-    const newVolume = parseInt(e.target.value);
-    setVolume(newVolume);
-    if (youTubePlayerRef.current && !isMuted) {
-      youTubePlayerRef.current.setVolume(newVolume);
-    }
-    setShowControls(true);
-  };
-
-  const restorePlayer = () => {
+  // Button handlers
+  const handleRestoreClick = useCallback((e) => {
+    e.stopPropagation();
     if (playerState && youTubePlayerRef.current) {
       const updatedState = {
         ...playerState,
@@ -502,9 +477,10 @@ export default function MinimizedPlayer() {
     if (playerState?.youtubeId) {
       router.push(`/video/${playerState.youtubeId}?t=${Math.floor(currentTime)}`);
     }
-  };
+  }, [playerState, isPlaying, currentTime, volume, isMuted, progress, router]);
 
-  const closePlayer = () => {
+  const handleCloseClick = useCallback((e) => {
+    e.stopPropagation();
     if (youTubePlayerRef.current) {
       try {
         youTubePlayerRef.current.stopVideo();
@@ -516,7 +492,34 @@ export default function MinimizedPlayer() {
     setPlayerState(null);
     setPlayerInitialized(false);
     playerInitializationAttempted.current = false;
-  };
+  }, []);
+
+  const togglePlay = useCallback((e) => {
+    e.stopPropagation();
+    if (youTubePlayerRef.current) {
+      if (isPlaying) {
+        youTubePlayerRef.current.pauseVideo();
+      } else {
+        youTubePlayerRef.current.playVideo();
+      }
+    }
+    setShowControls(true);
+  }, [isPlaying]);
+
+  const toggleMute = useCallback((e) => {
+    e.stopPropagation();
+    if (youTubePlayerRef.current) {
+      if (isMuted) {
+        youTubePlayerRef.current.unMute();
+        youTubePlayerRef.current.setVolume(volume);
+        setIsMuted(false);
+      } else {
+        youTubePlayerRef.current.mute();
+        setIsMuted(true);
+      }
+    }
+    setShowControls(true);
+  }, [isMuted, volume]);
 
   // Add event listeners
   useEffect(() => {
@@ -541,23 +544,23 @@ export default function MinimizedPlayer() {
       style={{
         left: `${position.x}px`,
         top: `${position.y}px`,
-        cursor: isDragging ? 'grabbing' : 'grab',
+        cursor: isDragging ? 'grabbing' : 'default',
         transition: isDragging ? 'none' : 'box-shadow 0.2s ease',
         boxShadow: isDragging ? '0 20px 40px rgba(0,0,0,0.5)' : '0 10px 25px rgba(0,0,0,0.3)',
-        touchAction: 'none',
+        touchAction: 'pan-y',
         WebkitTapHighlightColor: 'transparent'
       }}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
     >
       {/* Header - Draggable area */}
       <div 
         className="w-full h-12 md:h-8 bg-black/90 flex items-center justify-between px-4 md:px-3"
         onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
       >
         <div className="flex items-center gap-2">
           <Move size={14} className="text-white/60 hidden md:block" />
@@ -567,14 +570,18 @@ export default function MinimizedPlayer() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={restorePlayer}
+            onClick={handleRestoreClick}
+            onTouchStart={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
             className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 transition-colors"
             aria-label="Restore to full screen"
           >
             <Maximize2 size={16} className="text-white" />
           </button>
           <button
-            onClick={closePlayer}
+            onClick={handleCloseClick}
+            onTouchStart={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
             className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 transition-colors"
             aria-label="Close player"
           >
@@ -614,6 +621,8 @@ export default function MinimizedPlayer() {
           >
             <button
               onClick={togglePlay}
+              onTouchStart={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
               className="p-5 md:p-4 bg-black/70 rounded-full hover:bg-black/90 active:scale-95 transition-all backdrop-blur-md"
               aria-label={isPlaying ? 'Pause' : 'Play'}
             >
@@ -641,6 +650,8 @@ export default function MinimizedPlayer() {
           <div className="flex items-center gap-3">
             <button
               onClick={togglePlay}
+              onTouchStart={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
               disabled={!playerInitialized}
               className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 disabled:opacity-50 transition-colors"
               aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -659,6 +670,8 @@ export default function MinimizedPlayer() {
           <div className="flex items-center gap-3">
             <button
               onClick={toggleMute}
+              onTouchStart={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
               disabled={!playerInitialized}
               className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 disabled:opacity-50 transition-colors"
               aria-label={isMuted ? 'Unmute' : 'Mute'}
