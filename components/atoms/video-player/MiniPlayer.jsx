@@ -23,6 +23,9 @@ export default function MinimizedPlayer() {
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [initialTouchDistance, setInitialTouchDistance] = useState(null);
+  const [isPullingDown, setIsPullingDown] = useState(false);
+  const [pullProgress, setPullProgress] = useState(0);
   
   const youTubePlayerRef = useRef(null);
   const playerContainerRef = useRef(null);
@@ -30,6 +33,8 @@ export default function MinimizedPlayer() {
   const controlsTimeoutRef = useRef(null);
   const progressIntervalRef = useRef(null);
   const playerInitializationAttempted = useRef(false);
+  const touchStartYRef = useRef(0);
+  const touchStartTimeRef = useRef(0);
 
   // Format time
   const formatTime = (time) => {
@@ -234,7 +239,7 @@ export default function MinimizedPlayer() {
     };
   }, [showControls]);
 
-  // Drag and drop handlers
+  // Desktop drag handlers
   const handleDragStart = useCallback((e) => {
     if (!minimizedPlayerRef.current) return;
     
@@ -256,8 +261,8 @@ export default function MinimizedPlayer() {
     // Keep within window bounds
     const windowWidth = window.innerWidth;
     const windowHeight = window.innerHeight;
-    const playerWidth = 320; // Width of minimized player
-    const playerHeight = 180 + 8 + 28 + 32; // Video height + progress + header + controls
+    const playerWidth = 320;
+    const playerHeight = 180 + 8 + 28 + 32;
     
     const boundedX = Math.max(0, Math.min(newX, windowWidth - playerWidth));
     const boundedY = Math.max(0, Math.min(newY, windowHeight - playerHeight));
@@ -267,12 +272,147 @@ export default function MinimizedPlayer() {
 
   const handleDragEnd = useCallback(() => {
     setIsDragging(false);
-    // Save position
+    setIsPullingDown(false);
+    setPullProgress(0);
     savePosition(position);
   }, [position, savePosition]);
 
-  // Add drag event listeners
+  // Mobile touch handlers (YouTube-style)
+  const handleTouchStart = useCallback((e) => {
+    if (!minimizedPlayerRef.current) return;
+    
+    const touch = e.touches[0];
+    const rect = minimizedPlayerRef.current.getBoundingClientRect();
+    
+    // Check if touching the header area (draggable area)
+    const isHeaderArea = touch.clientY - rect.top <= 32; // 32px is header height
+    
+    if (isHeaderArea) {
+      const offsetX = touch.clientX - rect.left;
+      const offsetY = touch.clientY - rect.top;
+      
+      setDragOffset({ x: offsetX, y: offsetY });
+      setIsDragging(true);
+      setShowControls(false);
+      touchStartYRef.current = touch.clientY;
+      touchStartTimeRef.current = Date.now();
+      e.preventDefault();
+    }
+  }, []);
+
+  const handleTouchMove = useCallback((e) => {
+    if (!isDragging || !minimizedPlayerRef.current) return;
+    
+    e.preventDefault();
+    
+    const touch = e.touches[0];
+    const currentY = touch.clientY;
+    const deltaY = currentY - touchStartYRef.current;
+    
+    // Check for pull-down-to-close gesture
+    if (deltaY > 50 && Math.abs(e.touches[0].clientX - (dragOffset.x + position.x)) < 50) {
+      setIsPullingDown(true);
+      const pullDistance = Math.min(deltaY, 150);
+      setPullProgress(pullDistance / 150);
+      
+      // Visual feedback - scale down and increase opacity
+      if (minimizedPlayerRef.current) {
+        const scale = 1 - (pullDistance * 0.002);
+        const opacity = 1 - (pullDistance * 0.005);
+        minimizedPlayerRef.current.style.transform = `scale(${Math.max(0.8, scale)})`;
+        minimizedPlayerRef.current.style.opacity = Math.max(0.5, opacity);
+      }
+    } else {
+      setIsPullingDown(false);
+      setPullProgress(0);
+      
+      // Normal dragging
+      const newX = touch.clientX - dragOffset.x;
+      const newY = touch.clientY - dragOffset.y;
+      
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
+      const playerWidth = 320;
+      const playerHeight = 180 + 8 + 28 + 32;
+      
+      const boundedX = Math.max(0, Math.min(newX, windowWidth - playerWidth));
+      const boundedY = Math.max(0, Math.min(newY, windowHeight - playerHeight));
+      
+      setPosition({ x: boundedX, y: boundedY });
+    }
+    
+    // Handle pinch to dismiss (optional)
+    if (e.touches.length === 2) {
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+      );
+      
+      if (!initialTouchDistance) {
+        setInitialTouchDistance(distance);
+      } else {
+        const scale = distance / initialTouchDistance;
+        if (scale < 0.7) {
+          // Pinch to close
+          closePlayer();
+        }
+      }
+    }
+  }, [isDragging, dragOffset, position, initialTouchDistance]);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (isDragging) {
+      const touchDuration = Date.now() - touchStartTimeRef.current;
+      
+      // Check if this was a pull-down-to-close gesture
+      if (isPullingDown && pullProgress > 0.7) {
+        closePlayer();
+      } else {
+        // Snap to edge for mobile (like YouTube)
+        const windowWidth = window.innerWidth;
+        const windowHeight = window.innerHeight;
+        const playerWidth = 320;
+        const playerHeight = 180 + 8 + 28 + 32;
+        
+        let newX = position.x;
+        let newY = position.y;
+        
+        // Snap to left or right edge
+        if (position.x < windowWidth / 2) {
+          newX = 10; // Snap to left
+        } else {
+          newX = windowWidth - playerWidth - 10; // Snap to right
+        }
+        
+        // Snap to top or bottom edge
+        if (position.y < windowHeight / 2) {
+          newY = 10; // Snap to top
+        } else {
+          newY = windowHeight - playerHeight - 10; // Snap to bottom
+        }
+        
+        setPosition({ x: newX, y: newY });
+        savePosition({ x: newX, y: newY });
+      }
+      
+      // Reset styles
+      if (minimizedPlayerRef.current) {
+        minimizedPlayerRef.current.style.transform = '';
+        minimizedPlayerRef.current.style.opacity = '';
+      }
+      
+      setIsDragging(false);
+      setIsPullingDown(false);
+      setPullProgress(0);
+      setInitialTouchDistance(null);
+    }
+  }, [isDragging, isPullingDown, pullProgress, position, savePosition]);
+
+  // Add event listeners
   useEffect(() => {
+    // Desktop events
     const handleMouseMove = (e) => {
       if (isDragging) {
         handleDrag(e);
@@ -285,14 +425,31 @@ export default function MinimizedPlayer() {
       }
     };
 
+    // Mobile events
+    const element = minimizedPlayerRef.current;
+    
+    if (element) {
+      element.addEventListener('touchstart', handleTouchStart, { passive: false });
+      element.addEventListener('touchmove', handleTouchMove, { passive: false });
+      element.addEventListener('touchend', handleTouchEnd);
+      element.addEventListener('touchcancel', handleTouchEnd);
+    }
+
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
     
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      
+      if (element) {
+        element.removeEventListener('touchstart', handleTouchStart);
+        element.removeEventListener('touchmove', handleTouchMove);
+        element.removeEventListener('touchend', handleTouchEnd);
+        element.removeEventListener('touchcancel', handleTouchEnd);
+      }
     };
-  }, [isDragging, handleDrag, handleDragEnd]);
+  }, [isDragging, handleDrag, handleDragEnd, handleTouchStart, handleTouchMove, handleTouchEnd]);
 
   const togglePlay = () => {
     if (youTubePlayerRef.current) {
@@ -338,7 +495,7 @@ export default function MinimizedPlayer() {
           slug: playerState.youtubeId
         },
         isPlaying: isPlaying,
-        currentTime: currentTime, // Make sure this is saved
+        currentTime: currentTime,
         volume: volume,
         isMuted: isMuted,
         progress: progress,
@@ -375,22 +532,25 @@ export default function MinimizedPlayer() {
   return (
     <div 
       ref={minimizedPlayerRef}
-      className="fixed z-50 bg-black rounded-lg shadow-2xl overflow-hidden border border-white/20 w-80 select-none"
+      className={`fixed z-50 bg-black rounded-lg shadow-2xl overflow-hidden border border-white/20 w-80 select-none transition-shadow ${
+        isDragging ? 'shadow-2xl ring-2 ring-white/30' : ''
+      }`}
       style={{
         left: `${position.x}px`,
         top: `${position.y}px`,
-        cursor: isDragging ? 'grabbing' : 'default'
+        cursor: isDragging ? 'grabbing' : 'default',
+        touchAction: 'none' // Prevent scrolling while dragging
       }}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
     >
       {/* Header - Draggable area */}
       <div 
-        className="w-full h-8 bg-black/90 flex items-center justify-between px-3 cursor-move"
+        className="w-full h-10 md:h-8 bg-black/90 flex items-center justify-between px-3 cursor-move touch-action-none"
         onMouseDown={handleDragStart}
       >
         <div className="flex items-center gap-2">
-          <Move size={12} className="text-white/60" />
+          <Move size={12} className="text-white/60 hidden md:block" />
           <span className="text-xs text-white/80 truncate max-w-[180px]">
             {playerState.video?.title || 'Playing Video'}
           </span>
@@ -398,14 +558,14 @@ export default function MinimizedPlayer() {
         <div className="flex items-center gap-1">
           <button
             onClick={restorePlayer}
-            className="p-1 hover:bg-white/10 rounded"
+            className="p-2 md:p-1 hover:bg-white/10 rounded"
             title="Restore to full screen"
           >
             <Maximize2 size={14} className="text-white" />
           </button>
           <button
             onClick={closePlayer}
-            className="p-1 hover:bg-white/10 rounded ml-1"
+            className="p-2 md:p-1 hover:bg-white/10 rounded ml-1"
             title="Close player"
           >
             <X size={14} className="text-white" />
@@ -442,7 +602,7 @@ export default function MinimizedPlayer() {
           }`}>
             <button
               onClick={togglePlay}
-              className="p-3 bg-black/60 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm"
+              className="p-4 md:p-3 bg-black/60 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm"
             >
               {isPlaying ? 
                 <Pause size={24} className="text-white" /> : 
@@ -469,7 +629,7 @@ export default function MinimizedPlayer() {
             <button
               onClick={togglePlay}
               disabled={!playerInitialized}
-              className="p-1 hover:bg-white/10 rounded disabled:opacity-50"
+              className="p-2 md:p-1 hover:bg-white/10 rounded disabled:opacity-50"
               title={isPlaying ? "Pause" : "Play"}
             >
               {isPlaying ? 
@@ -487,7 +647,7 @@ export default function MinimizedPlayer() {
             <button
               onClick={toggleMute}
               disabled={!playerInitialized}
-              className="p-1 hover:bg-white/10 rounded disabled:opacity-50"
+              className="p-2 md:p-1 hover:bg-white/10 rounded disabled:opacity-50"
               title={isMuted ? "Unmute" : "Mute"}
             >
               {isMuted || volume === 0 ? 
@@ -503,7 +663,7 @@ export default function MinimizedPlayer() {
               value={isMuted ? 0 : volume}
               onChange={handleVolumeChange}
               disabled={!playerInitialized}
-              className="w-16 accent-white cursor-pointer disabled:opacity-50"
+              className="w-16 accent-white cursor-pointer disabled:opacity-50 hidden md:block"
               title="Volume"
             />
           </div>
@@ -513,6 +673,18 @@ export default function MinimizedPlayer() {
       {/* Drag indicator (only shown while dragging) */}
       {isDragging && (
         <div className="absolute inset-0 border-2 border-dashed border-white/30 pointer-events-none"></div>
+      )}
+      
+      {/* Pull down indicator (mobile) */}
+      {isPullingDown && (
+        <div className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none">
+          <div 
+            className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full mt-2"
+            style={{ opacity: pullProgress }}
+          >
+            <span className="text-xs text-white">Release to close</span>
+          </div>
+        </div>
       )}
     </div>
   );
