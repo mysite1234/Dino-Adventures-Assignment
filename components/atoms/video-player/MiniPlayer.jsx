@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Play, Pause, Volume2, VolumeX, Maximize2, X, Move } from 'lucide-react';
-import FullScreenPlayer from './FullScreenPlayer';
 
 const MINIMIZED_PLAYER_KEY = 'minimized_player_state';
 const MINIMIZED_PLAYER_POSITION_KEY = 'minimized_player_position';
@@ -23,9 +22,6 @@ export default function MinimizedPlayer() {
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [initialTouchDistance, setInitialTouchDistance] = useState(null);
-  const [isPullingDown, setIsPullingDown] = useState(false);
-  const [pullProgress, setPullProgress] = useState(0);
   
   const youTubePlayerRef = useRef(null);
   const playerContainerRef = useRef(null);
@@ -33,8 +29,10 @@ export default function MinimizedPlayer() {
   const controlsTimeoutRef = useRef(null);
   const progressIntervalRef = useRef(null);
   const playerInitializationAttempted = useRef(false);
-  const touchStartYRef = useRef(0);
-  const touchStartTimeRef = useRef(0);
+  const dragStartRef = useRef({ x: 0, y: 0, time: 0 });
+  const lastTouchRef = useRef({ x: 0, y: 0, time: 0 });
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const animationRef = useRef(null);
 
   // Format time
   const formatTime = (time) => {
@@ -46,7 +44,6 @@ export default function MinimizedPlayer() {
 
   // Load player state and position from localStorage
   useEffect(() => {
-    // Load saved position
     const savedPosition = localStorage.getItem(MINIMIZED_PLAYER_POSITION_KEY);
     if (savedPosition) {
       try {
@@ -57,12 +54,10 @@ export default function MinimizedPlayer() {
       }
     }
 
-    // Load player state
     const savedState = localStorage.getItem(MINIMIZED_PLAYER_KEY);
     if (savedState) {
       try {
         const state = JSON.parse(savedState);
-        // Check if state is less than 1 hour old
         if (Date.now() - state.timestamp < 3600000) {
           setPlayerState(state);
           setIsPlaying(state.isPlaying || false);
@@ -72,7 +67,6 @@ export default function MinimizedPlayer() {
           setDuration(state.duration || 0);
           setProgress(state.progress || 0);
         } else {
-          // Clear old state
           localStorage.removeItem(MINIMIZED_PLAYER_KEY);
         }
       } catch (error) {
@@ -114,22 +108,16 @@ export default function MinimizedPlayer() {
     setIsLoading(true);
 
     try {
-      // Load YouTube API
       await loadYouTubeAPI();
-
-      // Wait a bit for DOM to be ready
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Create player div
       const playerDiv = document.createElement('div');
       playerDiv.id = `minimized-youtube-player-${Date.now()}`;
       playerDiv.className = 'w-full h-full';
       
-      // Clear container and add player div
       playerContainerRef.current.innerHTML = '';
       playerContainerRef.current.appendChild(playerDiv);
 
-      // Create YouTube player
       const player = new window.YT.Player(playerDiv.id, {
         videoId: playerState.youtubeId,
         playerVars: {
@@ -143,24 +131,15 @@ export default function MinimizedPlayer() {
         },
         events: {
           onReady: (event) => {
-            console.log('Minimized YouTube Player Ready');
             youTubePlayerRef.current = event.target;
-            
-            // Set volume
             event.target.setVolume(volume);
-            if (isMuted) {
-              event.target.mute();
-            }
-            
-            // Seek to saved time
+            if (isMuted) event.target.mute();
             if (playerState.currentTime > 0) {
               event.target.seekTo(playerState.currentTime, true);
             }
-            
             setIsLoading(false);
             setPlayerInitialized(true);
             
-            // Start progress tracking
             if (progressIntervalRef.current) {
               clearInterval(progressIntervalRef.current);
             }
@@ -182,7 +161,6 @@ export default function MinimizedPlayer() {
             }, 1000);
           },
           onStateChange: (event) => {
-            console.log('Minimized Player State:', event.data);
             if (event.data === window.YT.PlayerState.PLAYING) {
               setIsPlaying(true);
             } else if (event.data === window.YT.PlayerState.PAUSED) {
@@ -211,7 +189,6 @@ export default function MinimizedPlayer() {
     }
 
     return () => {
-      // Cleanup
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
       }
@@ -239,217 +216,234 @@ export default function MinimizedPlayer() {
     };
   }, [showControls]);
 
-  // Desktop drag handlers
-  const handleDragStart = useCallback((e) => {
+  // Smooth snap to corner
+  const snapToCorner = useCallback(() => {
     if (!minimizedPlayerRef.current) return;
     
-    const rect = minimizedPlayerRef.current.getBoundingClientRect();
-    const offsetX = e.clientX - rect.left;
-    const offsetY = e.clientY - rect.top;
-    
-    setDragOffset({ x: offsetX, y: offsetY });
-    setIsDragging(true);
-    e.preventDefault();
-  }, []);
-
-  const handleDrag = useCallback((e) => {
-    if (!isDragging || !minimizedPlayerRef.current) return;
-    
-    const newX = e.clientX - dragOffset.x;
-    const newY = e.clientY - dragOffset.y;
-    
-    // Keep within window bounds
     const windowWidth = window.innerWidth;
     const windowHeight = window.innerHeight;
     const playerWidth = 320;
-    const playerHeight = 180 + 8 + 28 + 32;
+    const playerHeight = 244; // Total height
     
-    const boundedX = Math.max(0, Math.min(newX, windowWidth - playerWidth));
-    const boundedY = Math.max(0, Math.min(newY, windowHeight - playerHeight));
+    let targetX = position.x;
+    let targetY = position.y;
     
-    setPosition({ x: boundedX, y: boundedY });
-  }, [isDragging, dragOffset]);
-
-  const handleDragEnd = useCallback(() => {
-    setIsDragging(false);
-    setIsPullingDown(false);
-    setPullProgress(0);
-    savePosition(position);
+    // Snap to nearest edge
+    const margin = 20;
+    
+    if (position.x < windowWidth / 2) {
+      targetX = margin;
+    } else {
+      targetX = windowWidth - playerWidth - margin;
+    }
+    
+    if (position.y < windowHeight / 2) {
+      targetY = margin;
+    } else {
+      targetY = windowHeight - playerHeight - margin;
+    }
+    
+    // Animate to position
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+    
+    const startX = position.x;
+    const startY = position.y;
+    const startTime = performance.now();
+    const duration = 300;
+    
+    const animate = (currentTime) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easeOutCubic = 1 - Math.pow(1 - progress, 3);
+      
+      const newX = startX + (targetX - startX) * easeOutCubic;
+      const newY = startY + (targetY - startY) * easeOutCubic;
+      
+      setPosition({ x: newX, y: newY });
+      
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        setPosition({ x: targetX, y: targetY });
+        savePosition({ x: targetX, y: targetY });
+        animationRef.current = null;
+      }
+    };
+    
+    animationRef.current = requestAnimationFrame(animate);
   }, [position, savePosition]);
 
-  // Mobile touch handlers (YouTube-style)
+  // Desktop drag handlers
+  const handleMouseDown = useCallback((e) => {
+    e.preventDefault();
+    if (!minimizedPlayerRef.current) return;
+    
+    const rect = minimizedPlayerRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    });
+    setIsDragging(true);
+    
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+  }, []);
+
+  const handleMouseMove = useCallback((e) => {
+    if (!isDragging || !minimizedPlayerRef.current) return;
+    e.preventDefault();
+    
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    const playerWidth = 320;
+    const playerHeight = 244;
+    
+    let newX = e.clientX - dragOffset.x;
+    let newY = e.clientY - dragOffset.y;
+    
+    // Constrain to window bounds
+    newX = Math.max(0, Math.min(newX, windowWidth - playerWidth));
+    newY = Math.max(0, Math.min(newY, windowHeight - playerHeight));
+    
+    setPosition({ x: newX, y: newY });
+  }, [isDragging, dragOffset]);
+
+  const handleMouseUp = useCallback(() => {
+    if (isDragging) {
+      setIsDragging(false);
+      snapToCorner();
+    }
+  }, [isDragging, snapToCorner]);
+
+  // Mobile touch handlers - YouTube style
   const handleTouchStart = useCallback((e) => {
     if (!minimizedPlayerRef.current) return;
     
     const touch = e.touches[0];
     const rect = minimizedPlayerRef.current.getBoundingClientRect();
     
-    // Check if touching the header area (draggable area)
-    const isHeaderArea = touch.clientY - rect.top <= 32; // 32px is header height
-    
-    if (isHeaderArea) {
-      const offsetX = touch.clientX - rect.left;
-      const offsetY = touch.clientY - rect.top;
+    // Only allow drag from header area
+    if (touch.clientY - rect.top <= 48) {
+      e.preventDefault();
       
-      setDragOffset({ x: offsetX, y: offsetY });
+      setDragOffset({
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+      });
+      
+      dragStartRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+        time: Date.now()
+      };
+      
+      lastTouchRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+        time: Date.now()
+      };
+      
+      velocityRef.current = { x: 0, y: 0 };
       setIsDragging(true);
       setShowControls(false);
-      touchStartYRef.current = touch.clientY;
-      touchStartTimeRef.current = Date.now();
-      e.preventDefault();
+      
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
     }
   }, []);
 
   const handleTouchMove = useCallback((e) => {
     if (!isDragging || !minimizedPlayerRef.current) return;
-    
     e.preventDefault();
     
     const touch = e.touches[0];
-    const currentY = touch.clientY;
-    const deltaY = currentY - touchStartYRef.current;
+    const now = Date.now();
+    const dt = now - lastTouchRef.current.time;
     
-    // Check for pull-down-to-close gesture
-    if (deltaY > 50 && Math.abs(e.touches[0].clientX - (dragOffset.x + position.x)) < 50) {
-      setIsPullingDown(true);
-      const pullDistance = Math.min(deltaY, 150);
-      setPullProgress(pullDistance / 150);
-      
-      // Visual feedback - scale down and increase opacity
-      if (minimizedPlayerRef.current) {
-        const scale = 1 - (pullDistance * 0.002);
-        const opacity = 1 - (pullDistance * 0.005);
-        minimizedPlayerRef.current.style.transform = `scale(${Math.max(0.8, scale)})`;
-        minimizedPlayerRef.current.style.opacity = Math.max(0.5, opacity);
-      }
-    } else {
-      setIsPullingDown(false);
-      setPullProgress(0);
-      
-      // Normal dragging
-      const newX = touch.clientX - dragOffset.x;
-      const newY = touch.clientY - dragOffset.y;
+    // Calculate velocity
+    if (dt > 0) {
+      velocityRef.current = {
+        x: (touch.clientX - lastTouchRef.current.x) / dt,
+        y: (touch.clientY - lastTouchRef.current.y) / dt
+      };
+    }
+    
+    lastTouchRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: now
+    };
+    
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    const playerWidth = 320;
+    const playerHeight = 244;
+    
+    let newX = touch.clientX - dragOffset.x;
+    let newY = touch.clientY - dragOffset.y;
+    
+    // Rubber band effect when dragging beyond bounds
+    const overdragX = 30;
+    const overdrɑgY = 30;
+    
+    if (newX < 0) {
+      newX = -Math.min(Math.abs(newX), overdrɑgY);
+    }
+    if (newX > windowWidth - playerWidth) {
+      newX = windowWidth - playerWidth + Math.min(newX - (windowWidth - playerWidth), overdrɑgY);
+    }
+    if (newY < 0) {
+      newY = -Math.min(Math.abs(newY), overdrɑgY);
+    }
+    if (newY > windowHeight - playerHeight) {
+      newY = windowHeight - playerHeight + Math.min(newY - (windowHeight - playerHeight), overdrɑgY);
+    }
+    
+    setPosition({ x: newX, y: newY });
+  }, [isDragging, dragOffset]);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (!isDragging) return;
+    e.preventDefault();
+    
+    const touchEndTime = Date.now();
+    const dragDuration = touchEndTime - dragStartRef.current.time;
+    
+    setIsDragging(false);
+    
+    // Apply fling if fast enough
+    if (dragDuration < 300 && 
+        (Math.abs(velocityRef.current.x) > 0.3 || Math.abs(velocityRef.current.y) > 0.3)) {
       
       const windowWidth = window.innerWidth;
       const windowHeight = window.innerHeight;
       const playerWidth = 320;
-      const playerHeight = 180 + 8 + 28 + 32;
+      const playerHeight = 244;
       
-      const boundedX = Math.max(0, Math.min(newX, windowWidth - playerWidth));
-      const boundedY = Math.max(0, Math.min(newY, windowHeight - playerHeight));
+      // Calculate fling trajectory
+      let flingX = position.x + velocityRef.current.x * 500;
+      let flingY = position.y + velocityRef.current.y * 500;
       
-      setPosition({ x: boundedX, y: boundedY });
+      // Constrain with rubber band
+      flingX = Math.max(-30, Math.min(flingX, windowWidth - playerWidth + 30));
+      flingY = Math.max(-30, Math.min(flingY, windowHeight - playerHeight + 30));
+      
+      setPosition({ x: flingX, y: flingY });
+      
+      // Short delay before snapping
+      setTimeout(() => {
+        snapToCorner();
+      }, 50);
+    } else {
+      snapToCorner();
     }
-    
-    // Handle pinch to dismiss (optional)
-    if (e.touches.length === 2) {
-      const touch1 = e.touches[0];
-      const touch2 = e.touches[1];
-      const distance = Math.hypot(
-        touch2.clientX - touch1.clientX,
-        touch2.clientY - touch1.clientY
-      );
-      
-      if (!initialTouchDistance) {
-        setInitialTouchDistance(distance);
-      } else {
-        const scale = distance / initialTouchDistance;
-        if (scale < 0.7) {
-          // Pinch to close
-          closePlayer();
-        }
-      }
-    }
-  }, [isDragging, dragOffset, position, initialTouchDistance]);
-
-  const handleTouchEnd = useCallback((e) => {
-    if (isDragging) {
-      const touchDuration = Date.now() - touchStartTimeRef.current;
-      
-      // Check if this was a pull-down-to-close gesture
-      if (isPullingDown && pullProgress > 0.7) {
-        closePlayer();
-      } else {
-        // Snap to edge for mobile (like YouTube)
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
-        const playerWidth = 320;
-        const playerHeight = 180 + 8 + 28 + 32;
-        
-        let newX = position.x;
-        let newY = position.y;
-        
-        // Snap to left or right edge
-        if (position.x < windowWidth / 2) {
-          newX = 10; // Snap to left
-        } else {
-          newX = windowWidth - playerWidth - 10; // Snap to right
-        }
-        
-        // Snap to top or bottom edge
-        if (position.y < windowHeight / 2) {
-          newY = 10; // Snap to top
-        } else {
-          newY = windowHeight - playerHeight - 10; // Snap to bottom
-        }
-        
-        setPosition({ x: newX, y: newY });
-        savePosition({ x: newX, y: newY });
-      }
-      
-      // Reset styles
-      if (minimizedPlayerRef.current) {
-        minimizedPlayerRef.current.style.transform = '';
-        minimizedPlayerRef.current.style.opacity = '';
-      }
-      
-      setIsDragging(false);
-      setIsPullingDown(false);
-      setPullProgress(0);
-      setInitialTouchDistance(null);
-    }
-  }, [isDragging, isPullingDown, pullProgress, position, savePosition]);
-
-  // Add event listeners
-  useEffect(() => {
-    // Desktop events
-    const handleMouseMove = (e) => {
-      if (isDragging) {
-        handleDrag(e);
-      }
-    };
-
-    const handleMouseUp = () => {
-      if (isDragging) {
-        handleDragEnd();
-      }
-    };
-
-    // Mobile events
-    const element = minimizedPlayerRef.current;
-    
-    if (element) {
-      element.addEventListener('touchstart', handleTouchStart, { passive: false });
-      element.addEventListener('touchmove', handleTouchMove, { passive: false });
-      element.addEventListener('touchend', handleTouchEnd);
-      element.addEventListener('touchcancel', handleTouchEnd);
-    }
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      
-      if (element) {
-        element.removeEventListener('touchstart', handleTouchStart);
-        element.removeEventListener('touchmove', handleTouchMove);
-        element.removeEventListener('touchend', handleTouchEnd);
-        element.removeEventListener('touchcancel', handleTouchEnd);
-      }
-    };
-  }, [isDragging, handleDrag, handleDragEnd, handleTouchStart, handleTouchMove, handleTouchEnd]);
+  }, [isDragging, position, snapToCorner]);
 
   const togglePlay = () => {
     if (youTubePlayerRef.current) {
@@ -486,7 +480,6 @@ export default function MinimizedPlayer() {
   };
 
   const restorePlayer = () => {
-    // Save current state before navigating
     if (playerState && youTubePlayerRef.current) {
       const updatedState = {
         ...playerState,
@@ -504,10 +497,8 @@ export default function MinimizedPlayer() {
       localStorage.setItem(MINIMIZED_PLAYER_KEY, JSON.stringify(updatedState));
     }
     
-    // Set flag for fullscreen
     localStorage.setItem('request_fullscreen', 'true');
     
-    // Pass currentTime in URL as well for redundancy
     if (playerState?.youtubeId) {
       router.push(`/video/${playerState.youtubeId}?t=${Math.floor(currentTime)}`);
     }
@@ -527,86 +518,108 @@ export default function MinimizedPlayer() {
     playerInitializationAttempted.current = false;
   };
 
+  // Add event listeners
+  useEffect(() => {
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [handleMouseMove, handleMouseUp]);
+
   if (!playerState) return null;
 
   return (
     <div 
       ref={minimizedPlayerRef}
-      className={`fixed z-50 bg-black rounded-lg shadow-2xl overflow-hidden border border-white/20 w-80 select-none transition-shadow ${
-        isDragging ? 'shadow-2xl ring-2 ring-white/30' : ''
-      }`}
+      className="fixed z-50 bg-black rounded-2xl shadow-2xl overflow-hidden border border-white/20 w-80 select-none"
       style={{
         left: `${position.x}px`,
         top: `${position.y}px`,
-        cursor: isDragging ? 'grabbing' : 'default',
-        touchAction: 'none' // Prevent scrolling while dragging
+        cursor: isDragging ? 'grabbing' : 'grab',
+        transition: isDragging ? 'none' : 'box-shadow 0.2s ease',
+        boxShadow: isDragging ? '0 20px 40px rgba(0,0,0,0.5)' : '0 10px 25px rgba(0,0,0,0.3)',
+        touchAction: 'none',
+        WebkitTapHighlightColor: 'transparent'
       }}
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
     >
       {/* Header - Draggable area */}
       <div 
-        className="w-full h-10 md:h-8 bg-black/90 flex items-center justify-between px-3 cursor-move touch-action-none"
-        onMouseDown={handleDragStart}
+        className="w-full h-12 md:h-8 bg-black/90 flex items-center justify-between px-4 md:px-3"
+        onMouseDown={handleMouseDown}
       >
         <div className="flex items-center gap-2">
-          <Move size={12} className="text-white/60 hidden md:block" />
-          <span className="text-xs text-white/80 truncate max-w-[180px]">
+          <Move size={14} className="text-white/60 hidden md:block" />
+          <span className="text-xs md:text-xs text-white/80 font-medium truncate max-w-[200px] md:max-w-[180px]">
             {playerState.video?.title || 'Playing Video'}
           </span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           <button
             onClick={restorePlayer}
-            className="p-2 md:p-1 hover:bg-white/10 rounded"
-            title="Restore to full screen"
+            className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 transition-colors"
+            aria-label="Restore to full screen"
           >
-            <Maximize2 size={14} className="text-white" />
+            <Maximize2 size={16} className="text-white" />
           </button>
           <button
             onClick={closePlayer}
-            className="p-2 md:p-1 hover:bg-white/10 rounded ml-1"
-            title="Close player"
+            className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 transition-colors"
+            aria-label="Close player"
           >
-            <X size={14} className="text-white" />
+            <X size={16} className="text-white" />
           </button>
         </div>
       </div>
       
       {/* Video Player */}
-      <div className="relative w-full h-44 bg-black">
+      <div className="relative w-full aspect-video bg-black">
         <div 
           ref={playerContainerRef}
           className="w-full h-full"
         />
         
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black">
-            <div className="w-6 h-6 border-2 border-gray-300 border-t-white rounded-full animate-spin"></div>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+            <div className="w-8 h-8 border-3 border-gray-600 border-t-white rounded-full animate-spin"></div>
           </div>
         )}
         
         {!isLoading && !playerInitialized && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm">
             <div className="text-center">
-              <div className="w-8 h-8 border-2 border-gray-300 border-t-white rounded-full animate-spin mb-2 mx-auto"></div>
-              <p className="text-xs text-gray-300">Loading video...</p>
+              <div className="w-10 h-10 border-3 border-gray-600 border-t-white rounded-full animate-spin mb-3 mx-auto"></div>
+              <p className="text-sm text-gray-300 font-medium">Loading video...</p>
             </div>
           </div>
         )}
         
         {/* Overlay Controls */}
         {playerInitialized && (
-          <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ${
-            showControls ? 'opacity-100' : 'opacity-0'
-          }`}>
+          <div 
+            className={`absolute inset-0 flex items-center justify-center transition-all duration-300 ${
+              showControls ? 'opacity-100 bg-black/30' : 'opacity-0 pointer-events-none'
+            }`}
+          >
             <button
               onClick={togglePlay}
-              className="p-4 md:p-3 bg-black/60 rounded-full hover:bg-black/80 transition-colors backdrop-blur-sm"
+              className="p-5 md:p-4 bg-black/70 rounded-full hover:bg-black/90 active:scale-95 transition-all backdrop-blur-md"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
             >
               {isPlaying ? 
-                <Pause size={24} className="text-white" /> : 
-                <Play size={24} className="text-white" />
+                <Pause size={28} className="text-white" /> : 
+                <Play size={28} className="text-white ml-1" />
               }
             </button>
           </div>
@@ -614,78 +627,50 @@ export default function MinimizedPlayer() {
       </div>
       
       {/* Progress and Volume Controls */}
-      <div className="px-3 py-2 bg-black/80">
+      <div className="px-4 py-3 bg-black/90 backdrop-blur-sm">
         {/* Progress Bar */}
-        <div className="relative h-1 mb-2 bg-gray-700 rounded-full overflow-hidden">
+        <div className="relative h-1 mb-3 bg-gray-700/50 rounded-full overflow-hidden">
           <div 
-            className="absolute h-full bg-white rounded-full"
+            className="absolute h-full bg-red-600 rounded-full transition-all duration-100"
             style={{ width: `${progress}%` }}
           />
         </div>
         
         {/* Controls Row */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <button
               onClick={togglePlay}
               disabled={!playerInitialized}
-              className="p-2 md:p-1 hover:bg-white/10 rounded disabled:opacity-50"
-              title={isPlaying ? "Pause" : "Play"}
+              className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 disabled:opacity-50 transition-colors"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
             >
               {isPlaying ? 
-                <Pause size={14} className="text-white" /> : 
-                <Play size={14} className="text-white" />
+                <Pause size={16} className="text-white" /> : 
+                <Play size={16} className="text-white" />
               }
             </button>
             
-            <span className="text-xs text-white">
+            <span className="text-xs text-white/90 font-medium">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
           </div>
           
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <button
               onClick={toggleMute}
               disabled={!playerInitialized}
-              className="p-2 md:p-1 hover:bg-white/10 rounded disabled:opacity-50"
-              title={isMuted ? "Unmute" : "Mute"}
+              className="p-2 md:p-1.5 hover:bg-white/10 rounded-lg active:bg-white/20 disabled:opacity-50 transition-colors"
+              aria-label={isMuted ? 'Unmute' : 'Mute'}
             >
               {isMuted || volume === 0 ? 
-                <VolumeX size={14} className="text-white" /> : 
-                <Volume2 size={14} className="text-white" />
+                <VolumeX size={16} className="text-white" /> : 
+                <Volume2 size={16} className="text-white" />
               }
             </button>
-            
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={isMuted ? 0 : volume}
-              onChange={handleVolumeChange}
-              disabled={!playerInitialized}
-              className="w-16 accent-white cursor-pointer disabled:opacity-50 hidden md:block"
-              title="Volume"
-            />
           </div>
         </div>
       </div>
-
-      {/* Drag indicator (only shown while dragging) */}
-      {isDragging && (
-        <div className="absolute inset-0 border-2 border-dashed border-white/30 pointer-events-none"></div>
-      )}
-      
-      {/* Pull down indicator (mobile) */}
-      {isPullingDown && (
-        <div className="absolute top-0 left-0 right-0 flex justify-center pointer-events-none">
-          <div 
-            className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full mt-2"
-            style={{ opacity: pullProgress }}
-          >
-            <span className="text-xs text-white">Release to close</span>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
